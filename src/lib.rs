@@ -1,14 +1,15 @@
-//! Provides [Pac] (Parent And Child).
+//! Provides [PacCell] (a cell of a parent and a child).
 
 use std::marker::PhantomPinned;
 use std::ptr::NonNull;
 use std::{cell::OnceCell, pin::Pin};
 
-/// A parent and a child that is created by mutably borrowing the parent.
-/// Allows mutable access to the child.
-/// 
+/// A cell of a parent and a child, which is created by mutably borrowing the parent.
+/// While the parent is in the cell, it cannot be accessed in any way.
+/// Provides mutable access to the child.
+///
 /// This is useful in a rare case when you need to store and move both
-/// parent and the child together.
+/// parent and their child together.
 ///
 /// ## Examples
 ///
@@ -31,9 +32,9 @@ use std::{cell::OnceCell, pin::Pin};
 /// let hello_again = pac.unwrap();
 /// assert_eq!(hello_again.world, 12);
 /// ```
-/// 
+///
 /// For a real-world-like example, see the crate tests.
-pub struct Pac<P, C>(Pin<Box<PacInner<P, C>>>);
+pub struct PacCell<P, C>(Pin<Box<PacInner<P, C>>>);
 
 /// Inner object of [Pac].
 ///
@@ -55,7 +56,7 @@ struct PacInner<P, C> {
     _pin: PhantomPinned,
 }
 
-impl<'p, P: 'p, C> Pac<P, C> {
+impl<'p, P: 'p, C> PacCell<P, C> {
     /// Creates Pac by moving the parent into a [Box] and then calling
     /// the child constructor.
     pub fn new<F>(parent: P, child_constructor: F) -> Self
@@ -81,7 +82,7 @@ impl<'p, P: 'p, C> Pac<P, C> {
         let child = child_constructor(parent_ref);
         let _ = inner.child.set(child);
 
-        Pac(inner)
+        PacCell(inner)
     }
 
     /// Executes a function with a mutable reference to the child.

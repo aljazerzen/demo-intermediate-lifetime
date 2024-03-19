@@ -58,16 +58,16 @@ mod car {
     }
 }
 
-use pac::Pac;
+use pac_cell::PacCell;
 
 impl GetFluid for car::Car {
-    type Item<'a> = Pac<car::Engine<'a>, car::Fuel<'a, 'a>> where Self: 'a;
+    type Item<'a> = PacCell<car::Engine<'a>, car::Fuel<'a, 'a>> where Self: 'a;
 
     fn get_fluid<'a>(&'a mut self) -> Self::Item<'a> {
         // create engine by borrowing self
         let engine: car::Engine<'a> = self.get_engine();
 
-        Pac::new(engine, |e| e.get_fuel())
+        PacCell::new(engine, |e| e.get_fuel())
     }
 }
 
@@ -110,7 +110,7 @@ fn test_03() {
     }
     let hello = Hello { world: 10 };
 
-    let mut pac = Pac::new(hello, |h| &mut h.world);
+    let mut pac = PacCell::new(hello, |h| &mut h.world);
 
     let initial = pac.with_mut(|world| {
         let i = **world;

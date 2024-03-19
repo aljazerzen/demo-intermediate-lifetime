@@ -1,5 +1,9 @@
 [package]
-name = "pac"
+name = "pac_cell"
+description = "Parent and child cell"
+license = "MIT"
+homepage = "https://github.com/aljazerzen/pac_cell"
+documentation = "https://docs.rs/pac_cell"
 version = "0.1.0"
 edition = "2021"
 
