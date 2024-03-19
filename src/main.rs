@@ -15,13 +15,13 @@ mod car {
     }
 
     pub struct Engine<'car> {
-        id: usize,
+        pub id: usize,
         pub car: &'car mut Car,
         // + some internal fields
     }
 
-    pub struct Fuel<'engine> {
-        pub engine: &'engine usize,
+    pub struct Fuel<'car, 'engine> {
+        pub engine: &'engine mut Engine<'car>,
         // + some internal fields
     }
 
@@ -33,9 +33,15 @@ mod car {
     }
 
     impl<'car> Engine<'car> {
-        pub fn get_fuel(&self) -> Fuel<'_> {
+        pub fn get_fuel(&mut self) -> Fuel<'car, '_> {
             println!("create fuel");
-            Fuel { engine: &self.id }
+            Fuel { engine: self }
+        }
+    }
+
+    impl<'car, 'engine> Fuel<'car, 'engine> {
+        pub fn update(&mut self, val: f64) {
+            self.engine.car.engines[self.engine.id] = val;
         }
     }
 
@@ -45,7 +51,7 @@ mod car {
         }
     }
 
-    impl<'a> Drop for Fuel<'a> {
+    impl<'a, 'b> Drop for Fuel<'a, 'b> {
         fn drop(&mut self) {
             println!("drop fuel");
         }
@@ -58,50 +64,81 @@ use std::{cell::OnceCell, pin::Pin};
 
 use car::{Engine, Fuel};
 
-pub struct EngineAndFuel<'car> {
-    engine: Engine<'car>,
-    engine_ref: NonNull<Engine<'car>>,
-    fuel: OnceCell<Fuel<'car>>,
+/// Inner object of [Pac].
+///
+/// ## Safety
+///
+/// While this struct exist, the parent is considered mutably borrowed.
+/// Therefore, any access to parent is UB.
+///
+/// Because child might contain pointers to parent, this struct cannot
+/// be moved.
+pub struct PacInner<'car> {
+    child: OnceCell<Fuel<'car, 'car>>,
+    parent: Engine<'car>,
     _pin: PhantomPinned,
 }
 
-impl GetFluid for car::Car {
-    type Item<'a> = Pin<Box<EngineAndFuel<'a>>> where Self: 'a;
+/// Parent and a child that is created by mutably borrowing the parent.
+/// Allows mutable access to the child.
+pub struct Pac<'car>(Pin<Box<PacInner<'car>>>);
 
-    fn get_fluid<'a>(&'a mut self) -> Self::Item<'a> {
-        let engine = self.get_engine();
-
-        // this here is the main problem:
-        // I cannot express lifetime of this `engine`, since it is a local variable.
-        // What I want, is for it to exist as long as the returned values exists.
-        // ... so I put it into a combined struct together with fuel.
-        // But this is now a self-referential struct, so I must use a bit of Pin magic.
-
-        let res = EngineAndFuel {
-            engine,
-            engine_ref: NonNull::dangling(),
-            fuel: OnceCell::new(),
+impl<'car> Pac<'car> {
+    fn new<F>(parent: Engine<'car>, child_constructor: F) -> Self
+    where
+        F: for<'e> FnOnce(&'e mut Engine<'car>) -> Fuel<'car, 'e>,
+    {
+        // move engine into the struct and pin the struct on heap
+        let inner = PacInner {
+            parent,
+            child: OnceCell::new(),
             _pin: PhantomPinned,
         };
-        let mut boxed = Box::pin(res);
+        let mut inner = Box::pin(inner);
 
-        let engine_ref = NonNull::from(&boxed.engine);
-        unsafe {
-            let mut_ref: Pin<&mut EngineAndFuel> = Pin::as_mut(&mut boxed);
-            Pin::get_unchecked_mut(mut_ref).engine_ref = engine_ref;
-        }
+        // create mut reference to engine, without borrowing the struct
+        // SAFETY: generally this would be unsafe, since one could obtain multiple mut refs this way.
+        //   But because we don't allow any access to engine, this mut reference is guaranteed
+        //   to be the only one.
+        let mut parent_ref = NonNull::from(&inner.as_mut().parent);
+        let parent_ref = unsafe { parent_ref.as_mut() };
 
-        let fuel = unsafe { boxed.engine_ref.as_ref().get_fuel() };
-        let _ = boxed.fuel.set(fuel);
+        // create fuel and move it into the struct
+        let child = child_constructor(parent_ref);
+        let _ = inner.child.set(child);
 
-        boxed
+        Pac(inner)
+    }
+
+    pub fn with_mut<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Fuel<'car, 'car>) -> R,
+    {
+        let mut_ref: Pin<&mut PacInner> = Pin::as_mut(&mut self.0);
+
+        // SAFETY: this is safe because we don't move the inner pinned object
+        let inner = unsafe { Pin::get_unchecked_mut(mut_ref) };
+        let fuel = inner.child.get_mut().unwrap();
+
+        f(fuel)
+    }
+
+    pub fn unwrap(self) -> Engine<'car> {
+        // SAFETY: this is safe because child is dropped when this function finishes,
+        //    but parent still exists.
+        let inner = unsafe { Pin::into_inner_unchecked(self.0) };
+        inner.parent
     }
 }
 
-impl<'car> EngineAndFuel<'car> {
-    fn update(&mut self, val: f64) {
-        let engine_id = *self.fuel.get().unwrap().engine;
-        self.engine.car.engines[engine_id] = val;
+impl GetFluid for car::Car {
+    type Item<'a> = Pac<'a> where Self: 'a;
+
+    fn get_fluid<'a>(&'a mut self) -> Self::Item<'a> {
+        // create engine by borrowing self
+        let engine: Engine<'a> = self.get_engine();
+
+        Pac::new(engine, |e| e.get_fuel())
     }
 }
 
@@ -111,13 +148,15 @@ fn main() {
     };
 
     {
+        println!("get_fluid");
         let mut fuel = car.get_fluid();
+        
+        println!("with_mut");
+        fuel.with_mut(|f| f.update(4.2));
 
-        // even using the returned type in inconvenient...
-        unsafe {
-            let mut_ref: Pin<&mut EngineAndFuel> = Pin::as_mut(&mut fuel);
-            Pin::get_unchecked_mut(mut_ref).update(2.3);
-        }
+        println!("unwrap");
+        let _engine = fuel.unwrap();
+        println!("_engine");
     }
 
     println!("{:?}", car.engines);
