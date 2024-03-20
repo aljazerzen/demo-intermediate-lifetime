@@ -63,6 +63,15 @@ impl<'p, P: 'p, C> PacCell<P, C> {
     where
         F: FnOnce(&'p mut P) -> C,
     {
+        Self::try_new::<_, ()>(parent, |p| Ok(child_constructor(p))).unwrap()
+    }
+
+    /// Creates Pac by moving the parent into a [Box] and then calling
+    /// the child constructor.
+    pub fn try_new<F, E>(parent: P, child_constructor: F) -> Result<Self, E>
+    where
+        F: FnOnce(&'p mut P) -> Result<C, E>,
+    {
         // move engine into the struct and pin the struct on heap
         let inner = PacInner {
             parent,
@@ -79,10 +88,10 @@ impl<'p, P: 'p, C> PacCell<P, C> {
         let parent_ref = unsafe { parent_ref.as_mut() };
 
         // create fuel and move it into the struct
-        let child = child_constructor(parent_ref);
+        let child = child_constructor(parent_ref)?;
         let _ = inner.child.set(child);
 
-        PacCell(inner)
+        Ok(PacCell(inner))
     }
 
     /// Executes a function with a mutable reference to the child.
