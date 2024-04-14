@@ -33,5 +33,7 @@ For a real-world-like example, see the [crate tests](https://github.com/aljazerz
 
 ## Soundness
 
-This crate is fully sound and "incorrect" usage might lead to undefined behavior.
+This crate has unsound functions (such as `PacCell::new`), which might might lead
+to undefined behavior when used "incorrectly".
+
 See https://users.rust-lang.org/t/soundness-of-pac-cell-library/108598/4
