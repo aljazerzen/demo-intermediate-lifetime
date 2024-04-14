@@ -16,7 +16,7 @@ struct Hello {
 }
 let hello = Hello { world: 10 };
 
-let mut pac = pac::Pac::new(hello, |h| &mut h.world);
+let mut pac = pac_cell::PacCell::new(hello, |h| &mut h.world);
 
 let initial = pac.with_mut(|world| {
     let i = **world;
