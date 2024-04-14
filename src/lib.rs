@@ -129,7 +129,7 @@ macro_rules! pac_cell {
 /// Because child might contain pointers to parent, this struct cannot
 /// be moved.
 #[doc(hidden)]
-pub struct PacInner<P, C> {
+pub struct PacInner<C, P> {
     /// Child has to be defined before the parent, so it is dropped
     /// before the parent
     pub child: std::cell::OnceCell<C>,

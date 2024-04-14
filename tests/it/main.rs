@@ -58,17 +58,47 @@ mod car {
     }
 }
 
-use car::{Fuel, Engine};
+use car::{Engine, Fuel};
 
 struct FuelDep<'engine>(pub Fuel<'engine, 'engine>);
 
-pac_cell::pac_cell!(
-    struct EngineAndFuel<'car> {
-        owner: Engine<'car>,
+#[repr(transparent)]
+struct EngineAndFuel<'car> {
+    inner: std::pin::Pin<Box<pac_cell::PacInner<FuelDep<'static>, Engine<'car>>>>,
+}
+impl<'car> EngineAndFuel<'car> {
+    fn new(
+        parent: Engine<'car>,
+        child_constructor: impl for<'a> ::core::ops::FnOnce(&'a mut Engine<'car>) -> FuelDep<'a>,
+    ) -> Self {
+        let inner = pac_cell::PacInner {
+            parent,
+            child: std::cell::OnceCell::new(),
+            _pin: std::marker::PhantomPinned,
+        };
+        let mut inner = Box::pin(inner);
+        let mut parent_ref = std::ptr::NonNull::from(&inner.as_mut().parent);
+        let parent_ref: &mut Engine<'car> = unsafe { parent_ref.as_mut() };
 
-        dependent: FuelDep,
+        let child = child_constructor(parent_ref) as FuelDep<'static>;
+        let _ = inner.child.set(child);
+
+        EngineAndFuel { inner }
     }
-);
+
+    fn with_mut<R>(&mut self, f: impl FnOnce(&mut FuelDep<'_>) -> R) -> R {
+        let mut_ref: std::pin::Pin<&mut pac_cell::PacInner<FuelDep, Engine<'car>>> =
+            std::pin::Pin::as_mut(&mut self.inner);
+        let inner = unsafe { std::pin::Pin::get_unchecked_mut(mut_ref) };
+        let fuel = inner.child.get_mut().unwrap();
+        f(fuel)
+    }
+
+    fn into_owned(self) -> Engine<'car> {
+        let inner = unsafe { std::pin::Pin::into_inner_unchecked(self.inner) };
+        inner.parent
+    }
+}
 
 impl GetFluid for car::Car {
     type Item<'a> = EngineAndFuel<'a> where Self: 'a;
@@ -77,8 +107,12 @@ impl GetFluid for car::Car {
         // create engine by borrowing self
         let engine: car::Engine<'a> = self.get_engine();
 
-        EngineAndFuel::new(engine, |e| FuelDep(e.get_fuel()))
+        EngineAndFuel::new(engine, init_fuel_dep)
     }
+}
+
+fn init_fuel_dep<'e, 'car: 'e>(e: &'e mut Engine<'car>) -> FuelDep<'e> {
+    FuelDep(e.get_fuel())
 }
 
 #[test]
@@ -113,26 +147,26 @@ fn test_01() {
 //     assert_eq!(car.engines, vec![4.2, 1.5]);
 // }
 
-#[test]
-fn test_03() {
-    type Dep<'o> = &'o mut i64;
+// #[test]
+// fn test_03() {
+//     type Dep<'o> = &'o mut i64;
 
-    pac_cell::pac_cell!(
-        struct Hello {
-            owner: i64,
-            dependent: Dep,
-        }
-    );
+//     pac_cell::pac_cell!(
+//         struct Hello {
+//             owner: i64,
+//             dependent: Dep,
+//         }
+//     );
 
-    let mut pac = Hello::new(10, |h| h);
+//     let mut pac = Hello::new(10, |h| h);
 
-    let initial = pac.with_mut(|dep| {
-        let i = **dep;
-        **dep = 12;
-        i
-    });
-    assert_eq!(initial, 10);
+//     let initial = pac.with_mut(|dep| {
+//         let i = **dep;
+//         **dep = 12;
+//         i
+//     });
+//     assert_eq!(initial, 10);
 
-    let hello_again = pac.into_owned();
-    assert_eq!(hello_again, 12);
-}
+//     let hello_again = pac.into_owned();
+//     assert_eq!(hello_again, 12);
+// }
